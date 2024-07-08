@@ -543,3 +543,129 @@ def construct_beavertails_dataset(
     harmless_train_dataloader = DataLoader(harmless_train, batch_size=train_batch_size)
     test_dataloader = DataLoader(tokenized_test, batch_size=train_batch_size)
     return train_dataloader, harmless_train_dataloader, test_dataloader
+
+class BeaverTailsDataset(Dataset):
+    def __init__(self, jsonl_file_path):
+        self.data = []
+        with open(jsonl_file_path, 'r') as file:
+            for line in file:
+                self.data.append(json.loads(line))
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        return self.data[idx]
+
+def construct_beavertails_test_dataset(
+    tokenizer,
+    test_harmful_subset="all",
+    withhold_harmful_subset="",
+    test_batch_size=DEFAULT_BATCH_SIZE,
+    context_length=CONTEXT_LENGTH,
+    jsonl_path='../../data/beavertails/non_harm_ind_abuse_dataset.jsonl'
+):
+    """
+    Construct a test dataset from the BeaverTails dataset.
+
+    This function loads the BeaverTails test dataset, processes it, and creates a DataLoader
+    for testing purposes. It filters the dataset based on specified harmful subsets and
+    tokenizes the prompts.
+
+    Args:
+        tokenizer: The tokenizer to use for processing the text.
+        test_harmful_subset (str): The subset of harmful categories to include in the test set.
+            Default is "all".
+        withhold_harmful_subset (str): Categories to withhold from the test set.
+        test_batch_size (int): The batch size for the test DataLoader. 
+            Default is DEFAULT_BATCH_SIZE.
+        context_length (int): The maximum length for tokenized sequences. 
+            Default is CONTEXT_LENGTH.
+
+    Returns:
+        DataLoader: A DataLoader containing the processed and filtered test dataset.
+
+    The function performs the following steps:
+    1. Loads the BeaverTails test dataset.
+    2. Defines a tokenizer function to process the dataset entries.
+    3. Applies the tokenizer function to the dataset.
+    4. Formats the dataset as PyTorch tensors.
+    5. Limits the dataset to 100 samples if it's larger.
+    6. Creates and returns a DataLoader with the processed dataset.
+    """
+
+    # testds = load_dataset("PKU-Alignment/BeaverTails", split="30k_test")
+    # testds = BeaverTailsDataset("../../../data/beavertails/non_harm_ind_abuse_dataset.jsonl")
+    testdf = pd.read_json(path_or_buf=jsonl_path, lines=True)
+
+    # Convert to a Dataset object
+    testds = Dataset.from_pandas(testdf)
+
+    def _test_dataset_tokenizer(element):
+        contents = element['response']
+        categories = element['category']
+        processed_categories = []
+        for category in categories:
+            found_category = False
+            for k, v in category.items():
+                if v and not found_category:
+                    processed_categories.append(k)
+                    found_category = True
+
+        is_safes = element['is_safe']
+        prompts = element['prompt']
+        harmful_outputs = []
+        harmful_categories = []
+        output_categories = []
+        if test_harmful_subset != "all":
+            harmful_categories = BT_CATEGORIES[test_harmful_subset]
+        else:
+            for name, category in BT_CATEGORIES.items():
+                if name in withhold_harmful_subset:
+                    continue
+                harmful_categories.extend(category)
+        for prompt, content, category, is_safe in zip(prompts, contents, processed_categories, is_safes):
+            if is_safe:
+                continue
+            else:
+                if category not in harmful_categories:
+                    continue
+                harmful_outputs.append(
+                    f"Question: {prompt}\nAnswer:"
+                )
+                output_categories.append(category)
+        if len(harmful_outputs) == 0:
+            return {}
+        harmful_outputs = tokenizer(
+            harmful_outputs,
+            truncation=True,
+            padding="max_length",
+            max_length=context_length,
+            return_tensors="pt"
+        )
+        return {
+            **harmful_outputs,
+            "categories": output_categories
+        }
+
+    tokenizer.padding_side = "left"
+
+    tokenized_test = testds.map(
+        _test_dataset_tokenizer, batched=True,
+        remove_columns=[
+            col for col in
+            testds.column_names
+            if col not in ["input_ids", "attention_mask", "categories"]
+        ],
+        batch_size = None
+    )
+    tokenized_test.set_format("torch")
+
+    tokenizer.padding_side = "right"
+
+    # only select 100 samples to test on
+    if len(tokenized_test) > 100:
+        tokenized_test = tokenized_test.select(range(100))
+
+    test_dataloader = DataLoader(tokenized_test, batch_size=test_batch_size)
+    return test_dataloader
