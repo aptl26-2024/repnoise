@@ -7,7 +7,8 @@ import re
 
 # Read and parse the JSON Lines file
 data = []
-with open('results_base.jsonl', 'r') as file:
+# with open('results_social.jsonl', 'r') as file:
+with open('results_base_social.jsonl', 'r') as file:
     for line in file:
         data.append(json.loads(line))
 
@@ -15,24 +16,25 @@ with open('results_base.jsonl', 'r') as file:
 df = pd.DataFrame([
     {
         'ft_skip_split': re.search(r'ft-skip_split(\d+)', d['model']).group(1) if re.search(r'ft-skip_split(\d+)', d['model']) else 'unknown',
-        'epochs': int(re.search(r'epochs(\d+)', d['model']).group(1)) if re.search(r'epochs(\d+)', d['model']) else 0,
-        'lr': float(re.search(r'lr([\d.e-]+)', d['model']).group(1)) if re.search(r'lr([\d.e-]+)', d['model']) else 0.0,
+        'epochs': int(re.search(r'epoch(\d+)', d['model']).group(1)) if re.search(r'epoch(\d+)', d['model']) else 0,
+        # 'lr': float(re.search(r'lr([\d.e-]+)', d['model']).group(1)) if re.search(r'lr([\d.e-]+)', d['model']) else 0.0,
+        # 'lr': float(re.search(r'lr([\d.e-]+?(?:e-?[\d]+)?)', d['model']).group(1)) if re.search(r'lr([\d.e-]+?(?:e-?[\d]+)?)', d['model']) else 0.0,
+        'lr': float(re.search(r'lr([\d.]+e-?\d+)', d['model']).group(1)) if re.search(r'lr([\d.]+e-?\d+)', d['model']) else 0.0,
         'jsonl_path': d['jsonl_path'],
         'harmfulness_score': d['harmfulness_score']
     }
     for d in data
 ])
 
-display(df)
-
-# %%
-df[(df["ft_skip_split"] == "1") & (df["jsonl_path"] == "../../data/beavertails/non_harm_ind_abuse_dataset.jsonl") & (df["epochs"] == 4)]
+# display(df)
 
 # %%
 
 # Get unique combinations of ft_skip_split and jsonl_path
 combinations = df.groupby(['ft_skip_split', 'jsonl_path'])
 
+# duplicates = group[group.duplicated(subset=['epochs', 'lr'], keep=False)]
+# print(duplicates)
 # Create a heatmap for each combination
 for (ft_skip, jsonl), group in combinations:
     # Pivot the data to create a 2D matrix

@@ -11,7 +11,7 @@ import torch
 import gc
 import fcntl  # For Unix-based systems
 
-def get_evaluated_models():
+def get_evaluated_models(results_file):
     evaluated_models = set()
     if os.path.exists(results_file):
         with open(results_file, 'r') as f:
@@ -26,14 +26,21 @@ def get_evaluated_models():
 
 i = 0 
 
-# base_dir = "../../models/fted/Llama-2-7b-chat-hf/LossType.QUESTION_ANSWER/ft-skip_split0"
-base_dir = "../../models/fted/repnoise_0.001_beta/LossType.QUESTION_ANSWER/ft-skip_split0"
-results_file = "results.jsonl"
+# base_dir = "../../models/fted/Llama-2-7b-chat-hf/LossType.QUESTION_ANSWER/ft-skip_split1"
+# base_dir = "../../models/fted/repnoise_0.001_beta/LossType.QUESTION_ANSWER/ft-skip_split1"
+base_dirs = [
+    ("../../models/fted/Llama-2-7b-chat-hf/LossType.QUESTION_ANSWER/ft-skip_split0", "results_social.jsonl"),
+    ("../../models/fted/repnoise_0.001_beta/LossType.QUESTION_ANSWER/ft-skip_split0", "results_base_social.jsonl"),
+    ("../../models/fted/Llama-2-7b-chat-hf/LossType.QUESTION_ANSWER/ft-skip_split1", "results_social.jsonl"),
+    ("../../models/fted/repnoise_0.001_beta/LossType.QUESTION_ANSWER/ft-skip_split1", "results_base_social.jsonl"),
+]
+
+# results_file = "results_base_criminal.jsonl"
 
 def get_model_dirs(base_dir):
     return [os.path.join(base_dir, d) for d in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, d))]
 
-def append_result_to_file(result):
+def append_result_to_file(result, results_file):
     with open(results_file, 'a') as f:
         fcntl.flock(f, fcntl.LOCK_EX)
         try:
@@ -52,17 +59,17 @@ tokenizer.pad_token = tokenizer.eos_token
 # harmful_dataloader = accelerator.prepare(harmful_dataloader)
 # harmless_dataloader = accelerator.prepare(harmless_dataloader)
 jsonl_paths = [
-    '../../data/beavertails/non_harm_ind_abuse_dataset.jsonl',
-    '../../data/beavertails/harm_ind_dataset.jsonl',           
+    '../../data/beavertails/social_issues_dataset.jsonl',
+    '../../data/beavertails/criminal_activities_dataset.jsonl',           
 ]
 
-print(f"{len(get_model_dirs(base_dir))=}")
+# print(f"{len(get_model_dirs(base_dir))=}")
 results = []
 
 # %%
 
-@ray.remote(num_gpus=1)
-def main(model_dir, jsonl_path):
+@ray.remote(num_gpus=0.5)
+def main(model_dir, jsonl_path, results_file):
     global i
     try:
         test_dataloader = construct_beavertails_test_dataset(
@@ -85,7 +92,7 @@ def main(model_dir, jsonl_path):
         }
         
         results.append(result)
-        append_result_to_file(result)
+        append_result_to_file(result, results_file)
         i += 1
         print(f"Model: {model_dir}\n{jsonl_path=}")
         print(f"harmfulness score: {avg_harmfulness_score}")
@@ -102,7 +109,7 @@ def main(model_dir, jsonl_path):
             "error": str(e)
         }
         results.append(error_result)
-        append_result_to_file(error_result)
+        append_result_to_file(error_result, results_file)
         print(f"Error processing {model_dir}: {str(e)}")
         print("Error logged to file.")
         print("-" * 50)
@@ -111,12 +118,13 @@ def main(model_dir, jsonl_path):
         torch.cuda.empty_cache()
 
 ray.init()
-evaluated_models = get_evaluated_models()
 refs = []
-for model_dir in get_model_dirs(base_dir):
-    for jsonl_path in jsonl_paths:
-        if (model_dir, jsonl_path) not in evaluated_models:
-            refs += [main.remote(model_dir, jsonl_path)]
+for base_dir, results_file in base_dirs:
+    evaluated_models = get_evaluated_models(results_file)
+    for model_dir in get_model_dirs(base_dir):
+        for jsonl_path in jsonl_paths:
+            if (model_dir, jsonl_path) not in evaluated_models:
+                refs += [main.remote(model_dir, jsonl_path, results_file)]
     
 for ref in refs:
     ray.get(ref)
